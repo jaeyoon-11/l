@@ -1,0 +1,183 @@
+
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>서울</title>
+<style>
+html,body{margin:0;height:100%;background:#000;overflow:hidden}
+canvas{display:block;touch-action:none;cursor:grab}
+canvas:active{cursor:grabbing}
+</style>
+</head>
+<body>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const TEX="texture.jpg",HM="heightmap.png";
+const ASPECT=3886/2340,WW=12,WH=WW/ASPECT,HS=.93,BASE=-.06;
+
+const R=new THREE.WebGLRenderer({antialias:true});
+R.setPixelRatio(Math.min(devicePixelRatio,2));
+R.setClearColor(0);
+R.outputEncoding=THREE.sRGBEncoding;
+document.body.appendChild(R.domElement);
+
+const sc=new THREE.Scene(),cam=new THREE.PerspectiveCamera(30,1,.1,200),el=R.domElement;
+let th=0,ph=.5,dist=14,fit=14;
+
+function rs(){
+ R.setSize(innerWidth,innerHeight);
+ cam.aspect=innerWidth/innerHeight;
+ cam.updateProjectionMatrix();
+ const t=Math.tan(15*Math.PI/180);
+ fit=Math.max(WW*1.08/(2*t*cam.aspect),WH*1.1/(2*t));
+}
+
+addEventListener('resize',()=>{
+ const r=dist/fit;
+ rs();
+ dist=fit*r;
+});
+rs();
+dist=fit;
+
+function load(s){
+ return new Promise(r=>{
+  const i=new Image();
+  i.onload=()=>r(i);
+  i.src=s;
+ });
+}
+
+Promise.all([load(TEX),load(HM)]).then(([ti,hi])=>{
+ const W=hi.width,H=hi.height,c=document.createElement('canvas');
+ c.width=W;
+ c.height=H;
+ const x=c.getContext('2d');
+ x.drawImage(hi,0,0);
+
+ const d=x.getImageData(0,0,W,H).data,N=W*H;
+ const pos=new Float32Array(N*3),uv=new Float32Array(N*2),ins=new Uint8Array(N);
+
+ for(let j=0;j<H;j++)for(let i=0;i<W;i++){
+  const k=j*W+i;
+  ins[k]=d[k*4+3]>127?1:0;
+  pos[k*3]=(i/(W-1)-.5)*WW;
+  pos[k*3+1]=(d[k*4]*256+d[k*4+1])/65535*HS;
+  pos[k*3+2]=(j/(H-1)-.5)*WH;
+  uv[k*2]=i/(W-1);
+  uv[k*2+1]=1-j/(H-1);
+ }
+
+ const idx=[];
+ for(let j=0;j<H-1;j++)for(let i=0;i<W-1;i++){
+  const a=j*W+i,b=a+1,cc=a+W,dd=cc+1;
+  if(ins[a]&&ins[b]&&ins[cc]&&ins[dd])idx.push(a,cc,b,b,cc,dd);
+ }
+
+ const g=new THREE.BufferGeometry();
+ g.setAttribute('position',new THREE.BufferAttribute(pos,3));
+ g.setAttribute('uv',new THREE.BufferAttribute(uv,2));
+ g.setIndex(idx);
+
+ const t=new THREE.Texture(ti);
+ t.encoding=THREE.sRGBEncoding;
+ t.anisotropy=R.capabilities.getMaxAnisotropy();
+ t.minFilter=THREE.LinearMipmapLinearFilter;
+ t.needsUpdate=true;
+
+ sc.add(new THREE.Mesh(g,new THREE.MeshBasicMaterial({map:t})));
+
+ // side walls
+ const e=new Map();
+ for(let n=0;n<idx.length;n+=3)for(let q=0;q<3;q++){
+  const a=idx[n+q],b=idx[n+(q+1)%3];
+  const key=a<b?a*N+b:b*N+a;
+  e.set(key,e.has(key)?null:[a,b]);
+ }
+
+ const wp=[],wi=[];
+ for(const v of e.values())if(v){
+  const[a,b]=v,n=wp.length/3;
+  wp.push(
+   pos[a*3],pos[a*3+1],pos[a*3+2],
+   pos[b*3],pos[b*3+1],pos[b*3+2],
+   pos[b*3],BASE,pos[b*3+2],
+   pos[a*3],BASE,pos[a*3+2]
+  );
+  wi.push(n,n+1,n+2,n,n+2,n+3);
+ }
+
+ const wg=new THREE.BufferGeometry();
+ wg.setAttribute('position',new THREE.Float32BufferAttribute(wp,3));
+ wg.setIndex(wi);
+ sc.add(new THREE.Mesh(wg,new THREE.MeshBasicMaterial({
+  color:0x2c302b,side:THREE.DoubleSide
+ })));
+
+ const bp=pos.slice();
+ for(let k=0;k<N;k++)bp[k*3+1]=BASE;
+
+ const bg=new THREE.BufferGeometry();
+ bg.setAttribute('position',new THREE.BufferAttribute(bp,3));
+ bg.setIndex(idx);
+ sc.add(new THREE.Mesh(bg,new THREE.MeshBasicMaterial({
+  color:0x2c302b,side:THREE.DoubleSide
+ })));
+});
+
+let lx=0,ly=0,pd=0;
+const pts=new Map();
+
+el.addEventListener('pointerdown',e=>{
+ el.setPointerCapture(e.pointerId);
+ pts.set(e.pointerId,[e.clientX,e.clientY]);
+ lx=e.clientX;
+ ly=e.clientY;
+ if(pts.size==2){
+  const[a,b]=[...pts.values()];
+  pd=Math.hypot(a[0]-b[0],a[1]-b[1]);
+ }
+});
+
+el.addEventListener('pointermove',e=>{
+ if(!pts.has(e.pointerId))return;
+ pts.set(e.pointerId,[e.clientX,e.clientY]);
+
+ if(pts.size==2){
+  const[a,b]=[...pts.values()];
+  const q=Math.hypot(a[0]-b[0],a[1]-b[1]);
+  dist=Math.max(fit*.12,Math.min(fit*2,dist*pd/q));
+  pd=q;
+ }else{
+  th-=(e.clientX-lx)*.006;
+  ph=Math.max(.05,Math.min(1.45,ph-(e.clientY-ly)*.005));
+ }
+
+ lx=e.clientX;
+ ly=e.clientY;
+});
+
+const up=e=>pts.delete(e.pointerId);
+el.addEventListener('pointerup',up);
+el.addEventListener('pointercancel',up);
+
+el.addEventListener('wheel',e=>{
+ e.preventDefault();
+ dist=Math.max(fit*.12,Math.min(fit*2,dist*Math.exp(e.deltaY*.0015)));
+},{passive:false});
+
+(function loop(){
+ requestAnimationFrame(loop);
+ cam.position.set(
+  dist*Math.sin(ph)*Math.sin(th),
+  dist*Math.cos(ph),
+  dist*Math.sin(ph)*Math.cos(th)
+ );
+ cam.lookAt(0,0,0);
+ R.render(sc,cam);
+})();
+</script>
+</body>
+</html>
